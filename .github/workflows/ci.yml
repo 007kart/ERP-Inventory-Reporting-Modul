@@ -1,18 +1,40 @@
-name: Verify Next.js application
+name: Verify Next.js + PostgreSQL
 on:
   push:
     branches: [main]
   pull_request:
 jobs:
-  test-and-build:
+  integration:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: portfolio
+          POSTGRES_PASSWORD: portfolio
+          POSTGRES_DB: stockpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U portfolio -d stockpilot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://portfolio:portfolio@localhost:5432/stockpilot
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
       - run: npm install --no-audit --no-fund
       - run: npm test
+      - run: npm run db:setup
       - run: npm run build
-        env:
-          NEXT_TELEMETRY_DISABLED: '1'
+      - name: Start application and verify database-backed API
+        run: |
+          npm run start > /tmp/next-app.log 2>&1 &
+          curl --retry 25 --retry-delay 2 --retry-connrefused -fsS http://localhost:3000/api/health
+          curl -fsS "http://localhost:3000/api/items"
+          curl -fsS -X POST "http://localhost:3000/api/adjustments" -H "Content-Type: application/json" --data '{"itemId":1,"type":"in","quantity":2,"reason":"CI smoke test"}'
